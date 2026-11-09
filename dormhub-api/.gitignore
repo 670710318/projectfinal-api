@@ -1,0 +1,8 @@
+# ไฟล์ลับ ห้ามขึ้น GitHub
+.env
+.jwt_secret
+
+# ไฟล์ที่ build ออกมา
+/app
+/dormhub
+*.exe

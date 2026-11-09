@@ -1,0 +1,17 @@
+# ตรวจโค้ด Go อัตโนมัติทุกครั้งที่ push หรือเปิด pull request
+name: test
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod      # ใช้ Go เวอร์ชันเดียวกับที่เขียนใน go.mod
+      - run: go mod download
+      - run: go vet ./...              # หาโค้ดที่น่าจะผิด
+      - run: go test ./...             # เทสต์ mw/auth, handler/validate, auth/token
+      - run: go build -o app .         # build แบบเดียวกับ Render
