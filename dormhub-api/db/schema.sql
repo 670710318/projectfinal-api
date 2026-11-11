@@ -5,7 +5,7 @@
 BEGIN;
 
 DROP VIEW  IF EXISTS dorm_room_stats, dorm_review_stats;
-DROP TABLE IF EXISTS bookings, favorites, reviews, rooms, dorms, members, zones CASCADE;
+DROP TABLE IF EXISTS dorm_images, bookings, favorites, reviews, rooms, dorms, members, zones CASCADE;
 
 -- ---------------------------------------------------------------------------
 -- zones: ย่าน/ทำเลในนครปฐม ใช้เป็นตัวกรองหลักของหน้าค้นหา
@@ -47,7 +47,6 @@ CREATE TABLE dorms (
     nearby         VARCHAR(200),                    -- ข้อความสั้น เช่น "เดิน 5 นาทีถึง ม.มหิดล"
     description    TEXT          NOT NULL DEFAULT '',
     facilities     TEXT[]        NOT NULL DEFAULT '{}',   -- เช่น {แอร์,Wi-Fi,ที่จอดรถ}
-    image_url      VARCHAR(500),
     phone          VARCHAR(20),
     line_id        VARCHAR(50),
     water_rate     VARCHAR(60),                     -- เช่น "100 บาท/คน/เดือน"
@@ -75,6 +74,20 @@ CREATE TABLE rooms (
 );
 
 CREATE INDEX idx_rooms_dorm ON rooms (dorm_id, position);
+
+-- ---------------------------------------------------------------------------
+-- dorm_images: รูปของหอ หอละหลายรูป รูปแรก (position น้อยสุด) คือรูปปก
+-- เก็บแค่ลิงก์ ไม่ได้เก็บไฟล์รูปในฐานข้อมูล: https://... หรือ /photos/ชื่อไฟล์ (ไฟล์ใน public/photos ของหน้าเว็บ)
+-- ---------------------------------------------------------------------------
+CREATE TABLE dorm_images (
+    id        BIGSERIAL     PRIMARY KEY,
+    dorm_id   BIGINT        NOT NULL REFERENCES dorms (id) ON DELETE CASCADE,
+    url       VARCHAR(500)  NOT NULL CHECK (url LIKE 'https://%' OR url LIKE '/photos/%'),
+    caption   VARCHAR(100),                         -- เช่น "ห้องแอร์มาตรฐาน", "ล็อบบี้"
+    position  SMALLINT      NOT NULL DEFAULT 0
+);
+
+CREATE INDEX idx_dorm_images_dorm ON dorm_images (dorm_id, position);
 
 -- ---------------------------------------------------------------------------
 -- reviews: รีวิวจากสมาชิก 1 คนรีวิวหอเดียวกันได้ 1 ครั้ง

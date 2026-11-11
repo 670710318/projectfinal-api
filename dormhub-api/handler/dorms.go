@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -198,7 +199,7 @@ func (h *Handler) AdminDeleteDorm(w http.ResponseWriter, r *http.Request) {
 // cleanDorm ตัดช่องว่างและตรวจข้อมูลหอ คืน "" ถ้าผ่าน
 func cleanDorm(in *store.DormInput) string {
 	for _, p := range []*string{&in.Name, &in.Gender, &in.Address, &in.Nearby, &in.Description,
-		&in.ImageURL, &in.Phone, &in.LineID, &in.WaterRate, &in.ElectricRate, &in.Deposit} {
+		&in.Phone, &in.LineID, &in.WaterRate, &in.ElectricRate, &in.Deposit} {
 		*p = strings.TrimSpace(*p)
 	}
 	switch {
@@ -212,10 +213,6 @@ func cleanDorm(in *store.DormInput) string {
 		return "กรุณากรอกที่อยู่ (ไม่เกิน 300 ตัวอักษร)"
 	case runeLen(in.Nearby) > 200:
 		return "สถานที่ใกล้เคียงยาวเกิน 200 ตัวอักษร"
-	case in.ImageURL != "" && !strings.HasPrefix(in.ImageURL, "https://"):
-		return "ลิงก์รูปต้องขึ้นต้นด้วย https://"
-	case len(in.ImageURL) > 500:
-		return "ลิงก์รูปยาวเกินไป"
 	case runeLen(in.LineID) > 50 || runeLen(in.WaterRate) > 60 || runeLen(in.ElectricRate) > 60 || runeLen(in.Deposit) > 100:
 		return "ข้อมูลค่าใช้จ่ายหรือ LINE ยาวเกินไป"
 	}
@@ -237,6 +234,9 @@ func cleanDorm(in *store.DormInput) string {
 		facilities = append(facilities, f)
 	}
 	in.Facilities = facilities
+	if msg := cleanImages(in); msg != "" {
+		return msg
+	}
 	if len(in.Rooms) > 20 {
 		return "ใส่ประเภทห้องได้ไม่เกิน 20 แบบ"
 	}
@@ -254,5 +254,40 @@ func cleanDorm(in *store.DormInput) string {
 			return "ประเภทห้องที่ " + strconv.Itoa(i+1) + ": ขนาดห้องไม่ถูกต้อง"
 		}
 	}
+	return ""
+}
+
+// localPhoto ไฟล์รูปที่วางไว้ใน public/photos ของหน้าเว็บ เช่น /photos/d01-front.jpg
+// ยอมเฉพาะตัวอักษรอังกฤษ ตัวเลข . _ - และนามสกุลรูป (กันชื่อแปลก ๆ อย่าง ../ )
+var localPhoto = regexp.MustCompile(`(?i)^/photos/[a-z0-9][a-z0-9_-]*(\.[a-z0-9_-]+)*\.(jpe?g|png|webp)$`)
+
+// cleanImages ตัดช่องว่าง ข้ามแถวที่ไม่ได้ใส่ลิงก์ ตัดลิงก์ซ้ำ และตรวจว่าเป็น https
+// (บังคับ https หรือไฟล์ใน /photos/ เพราะหน้าเว็บบน Vercel เป็น https รูป http จะถูกเบราว์เซอร์บล็อก
+// และกันลิงก์แปลก ๆ อย่าง javascript: ที่อาจถูกใช้โจมตี)
+func cleanImages(in *store.DormInput) string {
+	seen := map[string]bool{}
+	images := []store.ImageInput{}
+	for _, im := range in.Images {
+		im.URL = strings.TrimSpace(im.URL)
+		im.Caption = strings.TrimSpace(im.Caption)
+		if im.URL == "" || seen[im.URL] {
+			continue
+		}
+		n := strconv.Itoa(len(images) + 1)
+		switch {
+		case !strings.HasPrefix(im.URL, "https://") && !localPhoto.MatchString(im.URL):
+			return "รูปที่ " + n + ": ลิงก์ต้องขึ้นต้นด้วย https:// หรือเป็นไฟล์ /photos/ชื่อไฟล์.jpg"
+		case len(im.URL) > 500:
+			return "รูปที่ " + n + ": ลิงก์ยาวเกิน 500 ตัวอักษร"
+		case runeLen(im.Caption) > 100:
+			return "รูปที่ " + n + ": คำอธิบายยาวเกิน 100 ตัวอักษร"
+		}
+		seen[im.URL] = true
+		images = append(images, im)
+	}
+	if len(images) > config.MaxImages {
+		return "ใส่รูปได้ไม่เกิน " + strconv.Itoa(config.MaxImages) + " รูปต่อหอ"
+	}
+	in.Images = images
 	return ""
 }

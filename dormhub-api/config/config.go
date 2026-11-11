@@ -23,6 +23,7 @@ const (
 	MaxRating        = 5
 	MaxNoteLen       = 300
 	MaxBookingDays   = 90      // นัดดูห้องล่วงหน้าได้ไม่เกิน 90 วัน
+	MaxImages        = 10      // รูปต่อหอ
 	MaxBodyBytes     = 1 << 20 // กล่อง JSON ใหญ่สุด 1 MB
 	DefaultPageSize  = 60
 	MaxPageSize      = 100

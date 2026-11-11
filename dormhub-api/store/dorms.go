@@ -32,7 +32,7 @@ type DormCard struct {
 	Zone        ZoneRef  `json:"zone"`
 	Gender      string   `json:"gender"`
 	Nearby      *string  `json:"nearby"`
-	ImageURL    *string  `json:"imageUrl"`
+	ImageURL    *string  `json:"imageUrl"` // รูปปก = รูปแรกใน dorm_images (nil = ยังไม่มีรูป)
 	Facilities  []string `json:"facilities"`
 	PriceMin    *int     `json:"priceMin"` // nil = ยังไม่มีประเภทห้อง
 	PriceMax    *int     `json:"priceMax"`
@@ -40,6 +40,12 @@ type DormCard struct {
 	ReviewCount int      `json:"reviewCount"`
 	Rating      *float64 `json:"rating"` // nil = ยังไม่มีรีวิว
 	IsPublished bool     `json:"isPublished"`
+}
+
+type Image struct {
+	ID      int64   `json:"id"`
+	URL     string  `json:"url"`
+	Caption *string `json:"caption"`
 }
 
 type Room struct {
@@ -61,6 +67,7 @@ type DormDetail struct {
 	ElectricRate *string   `json:"electricRate"`
 	Deposit      *string   `json:"deposit"`
 	Rooms        []Room    `json:"rooms"`
+	Images       []Image   `json:"images"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
@@ -91,7 +98,9 @@ var dormSorts = map[string]string{
 func ValidSort(s string) bool { _, ok := dormSorts[s]; return ok }
 
 const dormCardSelect = `
-SELECT d.id, d.name, z.id, z.slug, z.name_th, d.gender, d.nearby, d.image_url, d.facilities,
+SELECT d.id, d.name, z.id, z.slug, z.name_th, d.gender, d.nearby,
+       (SELECT i.url FROM dorm_images i WHERE i.dorm_id = d.id ORDER BY i.position, i.id LIMIT 1),
+       d.facilities,
        rs.price_min, rs.price_max, coalesce(rs.available, 0)::int,
        coalesce(vs.review_count, 0)::int, vs.rating::float8, d.is_published
 FROM dorms d
@@ -143,7 +152,9 @@ func (s *Store) ListDorms(ctx context.Context, f DormFilter) ([]DormCard, error)
 func (s *Store) GetDorm(ctx context.Context, id int64, includeHidden bool) (DormDetail, error) {
 	var d DormDetail
 	row := s.Pool.QueryRow(ctx, `
-		SELECT d.id, d.name, z.id, z.slug, z.name_th, d.gender, d.nearby, d.image_url, d.facilities,
+		SELECT d.id, d.name, z.id, z.slug, z.name_th, d.gender, d.nearby,
+       (SELECT i.url FROM dorm_images i WHERE i.dorm_id = d.id ORDER BY i.position, i.id LIMIT 1),
+       d.facilities,
 		       rs.price_min, rs.price_max, coalesce(rs.available, 0)::int,
 		       coalesce(vs.review_count, 0)::int, vs.rating::float8, d.is_published,
 		       d.address, d.description, d.phone, d.line_id, d.water_rate, d.electric_rate, d.deposit,
@@ -165,8 +176,29 @@ func (s *Store) GetDorm(ctx context.Context, id int64, includeHidden bool) (Dorm
 	if err != nil {
 		return DormDetail{}, err
 	}
-	d.Rooms, err = s.listRooms(ctx, id)
+	if d.Rooms, err = s.listRooms(ctx, id); err != nil {
+		return DormDetail{}, err
+	}
+	d.Images, err = s.listImages(ctx, id)
 	return d, err
+}
+
+func (s *Store) listImages(ctx context.Context, dormID int64) ([]Image, error) {
+	rows, err := s.Pool.Query(ctx,
+		`SELECT id, url, caption FROM dorm_images WHERE dorm_id = $1 ORDER BY position, id`, dormID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Image{}
+	for rows.Next() {
+		var im Image
+		if err := rows.Scan(&im.ID, &im.URL, &im.Caption); err != nil {
+			return nil, err
+		}
+		out = append(out, im)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) listRooms(ctx context.Context, dormID int64) ([]Room, error) {
@@ -226,22 +258,27 @@ type RoomInput struct {
 	Available  int      `json:"available"`
 }
 
+type ImageInput struct {
+	URL     string `json:"url"`
+	Caption string `json:"caption"`
+}
+
 type DormInput struct {
-	Name         string      `json:"name"`
-	ZoneID       int         `json:"zoneId"`
-	Gender       string      `json:"gender"`
-	Address      string      `json:"address"`
-	Nearby       string      `json:"nearby"`
-	Description  string      `json:"description"`
-	Facilities   []string    `json:"facilities"`
-	ImageURL     string      `json:"imageUrl"`
-	Phone        string      `json:"phone"`
-	LineID       string      `json:"lineId"`
-	WaterRate    string      `json:"waterRate"`
-	ElectricRate string      `json:"electricRate"`
-	Deposit      string      `json:"deposit"`
-	IsPublished  bool        `json:"isPublished"`
-	Rooms        []RoomInput `json:"rooms"`
+	Name         string       `json:"name"`
+	ZoneID       int          `json:"zoneId"`
+	Gender       string       `json:"gender"`
+	Address      string       `json:"address"`
+	Nearby       string       `json:"nearby"`
+	Description  string       `json:"description"`
+	Facilities   []string     `json:"facilities"`
+	Phone        string       `json:"phone"`
+	LineID       string       `json:"lineId"`
+	WaterRate    string       `json:"waterRate"`
+	ElectricRate string       `json:"electricRate"`
+	Deposit      string       `json:"deposit"`
+	IsPublished  bool         `json:"isPublished"`
+	Rooms        []RoomInput  `json:"rooms"`
+	Images       []ImageInput `json:"images"` // เรียงตามลำดับที่จะแสดง รูปแรก = รูปปก
 }
 
 // CreateDorm เพิ่มหอ + ประเภทห้องใน transaction เดียว พังกลางทางจะไม่มีอะไรค้างในตาราง
@@ -254,17 +291,20 @@ func (s *Store) CreateDorm(ctx context.Context, in DormInput) (int64, error) {
 
 	var id int64
 	err = tx.QueryRow(ctx, `
-		INSERT INTO dorms (name, zone_id, gender, address, nearby, description, facilities, image_url,
+		INSERT INTO dorms (name, zone_id, gender, address, nearby, description, facilities,
 		                   phone, line_id, water_rate, electric_rate, deposit, is_published)
-		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, NULLIF($8, ''),
-		        NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''), $14)
+		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7,
+		        NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), $13)
 		RETURNING id`,
-		in.Name, in.ZoneID, in.Gender, in.Address, in.Nearby, in.Description, in.Facilities, in.ImageURL,
+		in.Name, in.ZoneID, in.Gender, in.Address, in.Nearby, in.Description, in.Facilities,
 		in.Phone, in.LineID, in.WaterRate, in.ElectricRate, in.Deposit, in.IsPublished).Scan(&id)
 	if err != nil {
 		return 0, translate(err)
 	}
 	if err := saveRooms(ctx, tx, id, in.Rooms); err != nil {
+		return 0, err
+	}
+	if err := saveImages(ctx, tx, id, in.Images); err != nil {
 		return 0, err
 	}
 	return id, tx.Commit(ctx)
@@ -279,12 +319,12 @@ func (s *Store) UpdateDorm(ctx context.Context, id int64, in DormInput) error {
 
 	tag, err := tx.Exec(ctx, `
 		UPDATE dorms SET name = $2, zone_id = $3, gender = $4, address = $5, nearby = NULLIF($6, ''),
-		       description = $7, facilities = $8, image_url = NULLIF($9, ''), phone = NULLIF($10, ''),
-		       line_id = NULLIF($11, ''), water_rate = NULLIF($12, ''), electric_rate = NULLIF($13, ''),
-		       deposit = NULLIF($14, ''), is_published = $15, updated_at = now()
+		       description = $7, facilities = $8, phone = NULLIF($9, ''), line_id = NULLIF($10, ''),
+		       water_rate = NULLIF($11, ''), electric_rate = NULLIF($12, ''), deposit = NULLIF($13, ''),
+		       is_published = $14, updated_at = now()
 		WHERE id = $1`,
 		id, in.Name, in.ZoneID, in.Gender, in.Address, in.Nearby, in.Description, in.Facilities,
-		in.ImageURL, in.Phone, in.LineID, in.WaterRate, in.ElectricRate, in.Deposit, in.IsPublished)
+		in.Phone, in.LineID, in.WaterRate, in.ElectricRate, in.Deposit, in.IsPublished)
 	if err != nil {
 		return translate(err)
 	}
@@ -292,6 +332,9 @@ func (s *Store) UpdateDorm(ctx context.Context, id int64, in DormInput) error {
 		return ErrNotFound
 	}
 	if err := saveRooms(ctx, tx, id, in.Rooms); err != nil {
+		return err
+	}
+	if err := saveImages(ctx, tx, id, in.Images); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -329,6 +372,22 @@ func saveRooms(ctx context.Context, tx pgx.Tx, dormID int64, rooms []RoomInput) 
 			`INSERT INTO rooms (dorm_id, name, size_sqm, price_month, available, position)
 			 VALUES ($1, $2, $3, $4, $5, $6)`,
 			dormID, r.Name, r.SizeSqm, r.PriceMonth, r.Available, i); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// saveImages ลบรูปเดิมของหอทั้งหมดแล้วใส่ใหม่ตามลำดับที่ส่งมา
+// (ต่างจากห้อง: ไม่มีตารางไหนอ้างถึง id ของรูป จึงลบแล้วใส่ใหม่ได้เลย ง่ายกว่าและลำดับถูกเสมอ)
+func saveImages(ctx context.Context, tx pgx.Tx, dormID int64, images []ImageInput) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM dorm_images WHERE dorm_id = $1`, dormID); err != nil {
+		return err
+	}
+	for i, im := range images {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO dorm_images (dorm_id, url, caption, position) VALUES ($1, $2, NULLIF($3, ''), $4)`,
+			dormID, im.URL, im.Caption, i); err != nil {
 			return err
 		}
 	}

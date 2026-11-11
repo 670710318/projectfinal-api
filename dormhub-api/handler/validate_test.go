@@ -120,8 +120,43 @@ func TestCleanDorm(t *testing.T) {
 		t.Error("ราคา 0 ต้องไม่ผ่าน")
 	}
 	bad = in
-	bad.ImageURL = "javascript:alert(1)"
+	bad.Images = []store.ImageInput{{URL: "javascript:alert(1)"}}
 	if cleanDorm(&bad) == "" {
 		t.Error("ลิงก์รูปที่ไม่ใช่ https ต้องไม่ผ่าน")
+	}
+}
+
+func TestCleanImages(t *testing.T) {
+	in := store.DormInput{Images: []store.ImageInput{
+		{URL: " https://img.example.com/a.jpg ", Caption: " ล็อบบี้ "},
+		{URL: ""},                              // แถวว่าง ต้องถูกข้าม
+		{URL: "https://img.example.com/a.jpg"}, // ซ้ำ ต้องถูกตัด
+		{URL: "https://img.example.com/b.jpg"},
+	}}
+	if msg := cleanImages(&in); msg != "" {
+		t.Fatal(msg)
+	}
+	if len(in.Images) != 2 || in.Images[0].URL != "https://img.example.com/a.jpg" || in.Images[0].Caption != "ล็อบบี้" {
+		t.Fatalf("ทำความสะอาดรูปผิด: %+v", in.Images)
+	}
+
+	if cleanImages(&store.DormInput{Images: []store.ImageInput{{URL: "http://img.example.com/a.jpg"}}}) == "" {
+		t.Error("http (ไม่มี s) ต้องไม่ผ่าน")
+	}
+	if msg := cleanImages(&store.DormInput{Images: []store.ImageInput{{URL: "/photos/d01-front.jpg"}}}); msg != "" {
+		t.Errorf("ไฟล์ใน /photos/ ต้องผ่าน แต่ได้ %q", msg)
+	}
+	for _, bad := range []string{"/photos/../secret.jpg", "/photos/a b.jpg", "/photos/x.exe", "/other/x.jpg", "photos/x.jpg"} {
+		if cleanImages(&store.DormInput{Images: []store.ImageInput{{URL: bad}}}) == "" {
+			t.Errorf("%q ต้องไม่ผ่าน", bad)
+		}
+	}
+
+	many := store.DormInput{}
+	for i := 0; i <= config.MaxImages; i++ {
+		many.Images = append(many.Images, store.ImageInput{URL: "https://img.example.com/" + string(rune('a'+i)) + ".jpg"})
+	}
+	if cleanImages(&many) == "" {
+		t.Error("เกิน 10 รูปต้องไม่ผ่าน")
 	}
 }

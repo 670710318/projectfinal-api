@@ -31,7 +31,7 @@ dormhub-api/
 | Guest | POST | `/api/auth/login` | เข้าสู่ระบบ ได้ `{ token, member }` |
 | Guest | GET | `/api/zones` | ย่านทั้งหมด + จำนวนหอ |
 | Guest | GET | `/api/dorms?q=&zone=&gender=&priceMin=&priceMax=&available=1&sort=&limit=` | ค้นหาหอ (เฉพาะที่เผยแพร่) |
-| Guest | GET | `/api/dorms/{id}` | รายละเอียดหอ + ประเภทห้อง |
+| Guest | GET | `/api/dorms/{id}` | รายละเอียดหอ + ประเภทห้อง + รูปทั้งหมด |
 | Guest | GET | `/api/dorms/{id}/reviews` | รีวิวของหอ |
 | Member | GET / PUT | `/api/me` | ดู / แก้โปรไฟล์ (ชื่อ เบอร์โทร) |
 | Member | PUT | `/api/me/password` | เปลี่ยนรหัสผ่าน (ต้องยืนยันรหัสเดิม) |
@@ -44,13 +44,21 @@ dormhub-api/
 | Member | POST | `/api/me/bookings/{id}/cancel` | ยกเลิกคำขอที่ยังรอ |
 | Admin | GET | `/api/admin/stats` | ตัวเลขสรุป |
 | Admin | GET / POST | `/api/admin/dorms` | หอทั้งหมด (รวมที่ซ่อน) / เพิ่มหอ |
-| Admin | GET / PUT / DELETE | `/api/admin/dorms/{id}` | ดู / แก้ / ลบหอ (รวมประเภทห้อง) |
+| Admin | GET / PUT / DELETE | `/api/admin/dorms/{id}` | ดู / แก้ / ลบหอ (รวมประเภทห้องและรูป) |
 | Admin | GET | `/api/admin/bookings?status=pending` | คำขอนัดดูห้องทั้งหมด |
 | Admin | PUT | `/api/admin/bookings/{id}` | อนุมัติ / ปฏิเสธ `{status, adminNote}` |
 | Admin | GET | `/api/admin/members` | สมาชิกทั้งหมด |
 | Admin | PUT | `/api/admin/members/{id}/role` | ตั้ง / ถอด Admin |
 
 ไม่มีตั๋ว = **401**, มีตั๋วแต่ไม่ใช่ Admin = **403** (ตรวจที่ `mw/auth.go` ก่อนถึง handler)
+
+## รูปหอพัก
+- ตาราง `dorm_images` เก็บ**ลิงก์**รูป (`https://...` หรือ `/photos/ชื่อไฟล์` = ไฟล์ใน public/photos ของหน้าเว็บ) หอละไม่เกิน 10 รูป (`config.MaxImages`) รูปแรกคือรูปปกบนการ์ด
+- Admin ใส่ลิงก์ในหน้าแก้ไขหอ เรียงลำดับได้ บันทึกพร้อมข้อมูลหอใน transaction เดียว (`store.saveImages`)
+- `seed.sql` ใส่ภาพจำลอง (วาดด้วยโปรแกรม) 34 รูปไว้ให้แล้ว
+- ใช้รูปที่ทีมถ่ายเองหรือได้รับอนุญาต (เช่น Unsplash / Pexels) ห้ามดึงรูปจากเว็บหอพักอื่น
+- รูปที่ถ่ายเองต้องฝากไว้ที่ไหนสักที่ที่ได้ลิงก์ https ตรงไปที่ไฟล์รูป เช่น ใส่ไว้ในโฟลเดอร์ `public/photos/` ของ repo หน้าเว็บ
+  แล้ว Vercel จะให้ลิงก์ `https://<ชื่อเว็บ>.vercel.app/photos/รูป.jpg`
 
 ## รันในเครื่อง
 
